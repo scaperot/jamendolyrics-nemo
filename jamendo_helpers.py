@@ -5,7 +5,7 @@ from DALI import utilities
 
 
 import sys
-sys.path.append('../dali-dataset-tools')
+sys.path.append('../../dali-dataset-tools')
 import dali_helpers
 
 
@@ -69,8 +69,73 @@ def append_transcript_nemo(json_filename,audio_filename,duration,transcript):
     jsonfile.close()
     return
 
-def generate_audio_manifest():
+def get_jamendo_files():
+
+    #read in jamendo filenames
+    audio_filenames      = glob.glob(os.path.join('../mp3','*.mp3'))
+    word_onset_filenames = glob.glob(os.path.join('../annotations','*.wordonset.txt'))
+    word_filenames       = glob.glob(os.path.join('../lyrics','*words.txt'))
+
+    audio_filenames.sort()
+    word_onset_filenames.sort()
+    word_filenames.sort()
+
+    return audio_filenames, word_onset_filenames, word_filenames
+
+def get_jamendo_timing_labels(wordonset_fname):
+    with open(wordonset_fname) as f:
+        time_rows = list(csv.reader(f, delimiter="\t"))
+    return np.array([float(row[0]) for row in time_rows])
+
+def get_jamendo_transcript(words_fname):
+    with open(words_fname) as f:
+        word_rows = list(csv.reader(f, delimiter="\t"))
+    word_list = np.array([row[0] for row in word_rows])
+    return ' '.join(word_list)
+
+def generate_audio_manifest(audio_manifest_fname):
+    '''
+    generate NEMO audio manifest based on jamendolyrics song selection.
+
+    1. get all the mp3 files from mp3/
+    2. find all transcripts
+    3. write .json that is familiar to nemo to AUDIO_MANIFEST
+    '''
+    mp3_filenames, _, word_filenames = get_jamendo_files()
+    assert(len(mp3_filenames)==20),mp3_filenames.shape[0]
+
+    for i in range(len(mp3_filenames)):
+        audio_filename   = mp3_filenames[i]
+        transcript = get_jamendo_transcript(word_filenames[i])
+        append_transcript_nemo(audio_manifest_fname,audio_filename,10.2268,transcript)
+
+
     return True
+
+def get_transcript_for_window_full_song(basename,ref_times,ref_words,window_secs):
+    '''
+    given a window in time where a song is cropped, find the associated transcript 
+    by going through labels word for word and adding them to the transcript.
+
+    additionally, for each window_index, find the offset from the start of the song
+    to adjust the timing values relative to the start of the cropped song.
+
+    Input:
+    dali_annot (DALI object) - created using entry.annotations['annot']
+    window_secs (tuple) - (start of window in secs,end of window in secs)
+    window_index (int)  - index associated with the number of crops or associated segments created for the entire song.
+                          window relative to the start of the song.  used to create timing offset. 
+    
+    Return:
+    transcript (string), word onset timing (list of floats)
+    '''
+    transcript = ''
+    onset_timing = []
+    for i in range(len(ref_words)-1):
+        transcript += (ref_word[i] + ' ')
+        onset_timing.append( ref_times[i] )
+    
+    return transcript, onset_timing
 
 #def get_transcript_for_window(song_id, dali_annot,window_secs,window_index):
 def get_transcript_for_window(basename,ref_times,ref_words,window_secs,window_index):
@@ -225,15 +290,7 @@ if __name__ == '__main__':
     '''
     choose a random song, crop audio files, and massage transcripts into nemo toolkit format
     '''
-
-    #read in jamendo filenames
-    audio_filenames      = glob.glob(os.path.join('mp3','*.mp3'))
-    word_onset_filenames = glob.glob(os.path.join('annotations','*.wordonset.txt'))
-    word_filenames       = glob.glob(os.path.join('lyrics','*words.txt'))
-
-    audio_filenames.sort()
-    word_onset_filenames.sort()
-    word_filenames.sort()
+    audio_filenames, word_onset_filenames, word_filenames = get_jamendo_files()
 
     sample_rate = 22050
     nemo_manifest_filename = 'jamendo_for_nemo/jamendo_for_nemo.json'
@@ -241,25 +298,21 @@ if __name__ == '__main__':
     if not os.path.exists(audio_path):
         print('creating',audio_path)
         os.makedirs(os.path.abspath('.') + '/'+audio_path)
-    
+ 
+    # loop through all songs and preprocess 
     for i in range(len(word_onset_filenames)):
         ref_times = []
         ref_words = []
         print('Picking:',word_onset_filenames[i][:-14])
 
+
         audio_file      = audio_filenames[i]
         word_onset_file = word_onset_filenames[i] #picked randomly
         word_file       = word_filenames[i]
 
-        with open(word_onset_file) as f:
-            time_rows = list(csv.reader(f, delimiter="\t"))
-        ref_times = np.array([float(row[0]) for row in time_rows])
-
-        with open(word_file) as f:
-            word_rows = list(csv.reader(f, delimiter="\t"))
-        ref_words = np.array([row[0] for row in word_rows])
+        ref_times = get_jamendo_timing_labels(word_onset_file)
+        ref_words = get_jamendo_transcript(word_file)
         assert(ref_times.shape == ref_words.shape),"%d,%d" % (ref_times.shape[0], ref_words.shape[0])
-
 
         #preprocess a song
         if not preprocess_song(audio_file, ref_times, ref_words, audio_path, nemo_manifest_filename, sample_rate):
