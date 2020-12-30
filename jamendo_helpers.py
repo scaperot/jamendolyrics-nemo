@@ -137,7 +137,6 @@ def get_transcript_for_window_full_song(basename,ref_times,ref_words,window_secs
     
     return transcript, onset_timing
 
-#def get_transcript_for_window(song_id, dali_annot,window_secs,window_index):
 def get_transcript_for_window(basename,ref_times,ref_words,window_secs,window_index):
     '''
     given a window in time where a song is cropped, find the associated transcript 
@@ -226,7 +225,7 @@ def calc_window_for_song(total_length,win_samples):
 
     return np.concatenate((start_ndx, end_ndx),axis=1)
 
-def crop_song(audio_filename, ref_times, ref_words, audio_path, win_samples, sample_rate):
+def crop_song(audio_filename, audio_path, win_samples, sample_rate):
     '''
     crop_song - takes a DALI song and crops it m times into win_length samples.
 
