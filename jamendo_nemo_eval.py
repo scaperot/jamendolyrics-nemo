@@ -4,7 +4,7 @@
 # Quartznet model architecture:
 # https://github.com/NVIDIA/NeMo/blob/main/examples/asr/conf/quartznet_15x5.yaml
 #
-import re,time,argparse,json,sys
+import re,time,argparse,json,sys,glob
 import os.path
 import numpy as np
 
@@ -59,57 +59,6 @@ def prediction_save_logprobs(asr_model,filename,prediction_dir='./predictions/')
     #fname = open(pred_fname,'w') #jamendolyrics convention
     np.save(pred_fname,logprobs_list)
 
-def prediction_with_alignment(asr_model,filename,transcript,prediction_dir='./predictions/'):
-    
-
-    asr_model.preprocessor._sample_rate = 22050
-    
-    logprobs_list = asr_model.transcribe([filename], logprobs=True)
-    alphabet  = [t for t in asr_model.cfg['labels']] + ['%'] # converting to list and adding blank character.
-
-    # adapted example from here:
-    # https://github.com/lumaku/ctc-segmentation
-    config = ctc.CtcSegmentationParameters()
-    config.frame_duration_ms = 20  #frame duration is the window of the predictions (i.e. logprobs prediction window) 
-    config.blank = len(alphabet)-1 #index for character that is intended for 'blank' - in our case, we specify the last character in alphabet.
-
-
-    ground_truth_mat, utt_begin_indices = ctc.prepare_text(config,transcript,alphabet)
-
-    timings, char_probs, state_list     = ctc.ctc_segmentation(config,logprobs_list[0].cpu().numpy(),ground_truth_mat)
-    
-    # Obtain list of utterances with time intervals and confidence score
-    segments                            = ctc.determine_utterance_segments(config, utt_begin_indices, char_probs, timings, transcript)
-
-    print('Ground Truth Transcript:',transcript)
-    print('CTC Segmentation Dense Sequnce:\n',''.join(state_list))
-
-    #save onset per word.
-    print('Saving timing prediction.')
-
-    audiofile = strip_path(filename)
-    pred_fname = prediction_dir+'/'+audiofile[:-4]+'_align.csv'
-    fname = open(pred_fname,'w') #jamendolyrics convention
-    for i in transcript.split():
-       #
-       # taking each word, and writing out the word timings from segments variable
-       #
-       # re.search performs regular expression operations.
-       # .format inserts characters into {}.  
-       # r'<string>' is considered a raw string.
-       # char.start() gives you the start index of the starting character of the word (i) in transcript string
-       # char.end() gives you the last index of the ending character** of the word (i) in transcript string
-       # **the ending character is offset by one for the regex command, so a -1 is required to get the right 
-       # index
-       char = re.search(r'{}'.format(i),transcript)
-       #       segments[index of character][start time of char=0]
-       onset = segments[char.start()][0]
-       #       segments[index of character][end time of char=1]
-       term  = segments[char.end()-1][1]
-       fname.write(str(onset)+','+str(term)+'\n')
-    fname.close()
-
-
 def read_manifest(filename):
 
     line_list = []
@@ -143,7 +92,7 @@ def prediction_one_song(model,audio_filename,lp_dir='tmp',lp_ext='_logprobs.py',
     logprobs_list = []
     for f in logprobs_filenames:
         logprobs_list.append(np.load(f))
-    
+ 
     logprobs = logprobs_list[0]
     for i in range(1,len(logprobs_list)):
         logprobs = np.concatenate((logprobs,logprobs_list[i]))
@@ -255,25 +204,36 @@ if __name__ == '__main__':
     #load model 
     asr_model = restore_asr(model_filename)
 
-    #FOR ONE FILE...make a for loop to do all songs...
-    i = np.random.randint(len(files))
-    song_fname = files[i]
+    for i in range(len(files)):
+        song_fname = files[i]
 
-    print('Cropping songs...')
-    #225500 - 10.23 seconds is the time chosen for the size of model...
-    #22050  - sample rate used for training the model
-    _ , song_cnames_list = jamendo_helpers.crop_song(song_fname,tmp_dir,225500,22050)
+        print('Cropping songs...')
+        #225500 - 10.23 seconds is the time chosen for the size of model...
+        #22050  - sample rate used for training the model
+        _ , song_cnames_list = jamendo_helpers.crop_song(song_fname,tmp_dir,225500,22050)
 
-    print('Testing',len(song_cnames_list),'files.')
-    ptime = []
-    for i in range(len(song_cnames_list)):
-        print('Testing',strip_path(song_cnames_list[i]))
-        prediction_save_logprobs(asr_model, song_cnames_list[i], tmp_dir)
+        print('Testing',len(song_cnames_list),'files.')
+        ptime = []
+        for i in range(len(song_cnames_list)):
+            print('Testing',strip_path(song_cnames_list[i]))
+            prediction_save_logprobs(asr_model, song_cnames_list[i], tmp_dir)
 
-    prediction_one_song(asr_model,audio_filename,lp_dir='tmp',lp_ext='_logprobs.py',word_dir='../lyrics',word_ext='.words.txt',prediction_dir='metadata',prediction_ext='_align.csv'):
+        prediction_one_song(asr_model,strip_path(song_fname),lp_dir='tmp',lp_ext='_logprobs.py',word_dir='../lyrics',word_ext='.words.txt',prediction_dir='metadata',prediction_ext='_align.csv')
 
+    #delay = np.arange(0,25.0,1.0)
+    delay = [0]
+    ae_list = []
+    results_list = []
+    preds_list = []
+    for i in delay:
+        config['main']['DELAY'] = str(i)
+        results, preds = Evaluate.compute_metrics(config)
+        #Evaluate.print_results(results)
+        ae_list.append(results['mean_AE'][0])
+        results_list.append(results)
+        preds_list.append(preds)
 
-    #print(np.mean(ptime),'to run prediction on 10s file.')
-
-    #results = Evaluate.compute_metrics(config)
-    #Evaluate.print_results(results)
+    ndx = np.argmin(ae_list)
+    print('Lowest Error was:',delay[ndx])
+    print( Evaluate.print_results( results_list[ndx]) )
+    print(ae_list)
