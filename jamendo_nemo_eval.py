@@ -41,7 +41,7 @@ def restore_asr(restore_path):
     return quartznet_model
 
 
-def prediction_save_logprobs(asr_model,filename,prediction_dir='./predictions/'):
+def prediction_save_logprobs(asr_model,filename,prediction_dir):
     
 
     asr_model.preprocessor._sample_rate = 22050
@@ -89,6 +89,8 @@ def prediction_one_song(model,audio_filename,lp_dir='tmp',lp_ext='_logprobs.py',
     config.frame_duration_ms = 20  #frame duration is the window of the predictions (i.e. logprobs prediction window) 
     config.blank = len(alphabet)-1 #index for character that is intended for 'blank' - in our case, we specify the last character in alphabet.
     logprobs_filenames      = glob.glob(os.path.join(lp_dir,basename+'*_logprobs.npy'))
+    logprobs_filenames.sort()
+
     logprobs_list = []
     for f in logprobs_filenames:
         logprobs_list.append(np.load(f))
@@ -161,6 +163,7 @@ if __name__ == '__main__':
     '''
     parser = argparse.ArgumentParser(description="Run Audio file(s) / Transcripts (from nemo audio manifest)  through a known model for lyric alignment predictions, and save to file.")
     parser.add_argument('-c','--config', required=False, default='jamendo_for_nemo.cfg', type=str,help='config file with model, audio, prediction setup information.')
+    parser.add_argument('--eval-only', required=False, default=False, action='store_true',help='skips preprocessing and goes straight to alignment.')
     args = parser.parse_args()
 
     print('Using: ',args.config)
@@ -168,57 +171,61 @@ if __name__ == '__main__':
     config = ConfigParser(inline_comment_prefixes=["#"])
     config.read(args.config)
 
-    audio_manifest_path = config.get('main','AUDIO_MANIFEST')
-    print('Using: ',audio_manifest_path)
+    if not args.eval_only:
+        audio_manifest_path = config.get('main','AUDIO_MANIFEST')
+        print('Using: ',audio_manifest_path)
 
-    
-    exit_flag = False
-    if not os.path.exists(audio_manifest_path):
-        print(audio_manifest_path,'not found.  Exiting.')
-        exit_flag = True
-    
-    model_filename      = config.get('main','MODEL')
-    print('Using: ',model_filename)
-    if not os.path.exists(model_filename):
-        print(model_filename,'not found.  Exiting.')
-        exit_flag = True
-    
-    prediction_path     = config.get('main','PREDICTION_PATH')
-    print('Using: ',prediction_path)
-    if not os.path.exists(prediction_path):
-        print('prediction directory not found, trying to create it.')
-        os.makedirs(prediction_dir)
-        if not os.path.isabs(prediction_dir):
-            #make string absolute path
-            prediction_dir = os.path.abspath(prediction_dir)
+        
+        exit_flag = False
+        if not os.path.exists(audio_manifest_path):
+            print(audio_manifest_path,'not found.  Exiting.')
+            exit_flag = True
+        
+        model_filename      = config.get('main','MODEL')
+        print('Using: ',model_filename)
+        if not os.path.exists(model_filename):
+            print(model_filename,'not found.  Exiting.')
+            exit_flag = True
+        
+        prediction_path     = config.get('main','PREDICTION_PATH')
+        print('Using: ',prediction_path)
+        if not os.path.exists(prediction_path):
+            print('prediction directory not found, trying to create it.')
+            os.makedirs(prediction_path)
+            if not os.path.isabs(prediction_path):
+                #make string absolute path
+                prediction_dir = os.path.abspath(prediction_path)
 
-    #make tmp for temporary files that are cropped to run through the model.
-    tmp_dir = 'tmp'
-    if not os.path.exists(tmp_dir):
-        print('WARNING: Creating directory:',tmp_dir)
-        os.makedirs(tmp_dir)
+        tmp_dir = 'tmp'
+        sample_rate = 22050
+        window_size_samples = 225500
+        #make tmp for temporary files that are cropped to run through the model.
 
-    if exit_flag: sys.exit()
+        if not os.path.exists(tmp_dir):
+            print('WARNING: Creating directory:',tmp_dir)
+            os.makedirs(tmp_dir)
 
-    files,transcripts = read_manifest(audio_manifest_path)
-    #load model 
-    asr_model = restore_asr(model_filename)
+        if exit_flag: sys.exit()
 
-    for i in range(len(files)):
-        song_fname = files[i]
+        files,transcripts = read_manifest(audio_manifest_path)
+        #load model 
+        asr_model = restore_asr(model_filename)
 
-        print('Cropping songs...')
-        #225500 - 10.23 seconds is the time chosen for the size of model...
-        #22050  - sample rate used for training the model
-        _ , song_cnames_list = jamendo_helpers.crop_song(song_fname,tmp_dir,225500,22050)
+        for i in range(len(files)):
+            song_fname = files[i]
 
-        print('Testing',len(song_cnames_list),'files.')
-        ptime = []
-        for i in range(len(song_cnames_list)):
-            print('Testing',strip_path(song_cnames_list[i]))
-            prediction_save_logprobs(asr_model, song_cnames_list[i], tmp_dir)
+            print('Cropping songs...')
+            #225500 - 10.23 seconds is the time chosen for the size of model...
+            #22050  - sample rate used for training the model
+            _ , song_cnames_list = jamendo_helpers.crop_song(song_fname,tmp_dir,window_size_samples,sample_rate)
 
-        prediction_one_song(asr_model,strip_path(song_fname),lp_dir='tmp',lp_ext='_logprobs.py',word_dir='../lyrics',word_ext='.words.txt',prediction_dir='metadata',prediction_ext='_align.csv')
+            print('Testing',len(song_cnames_list),'files.')
+            ptime = []
+            for j in range(len(song_cnames_list)):
+                print('Testing',strip_path(song_cnames_list[j]))
+                prediction_save_logprobs(asr_model, song_cnames_list[j], tmp_dir)
+
+            prediction_one_song(asr_model,strip_path(song_fname),lp_dir='tmp',lp_ext='_logprobs.py',word_dir='../lyrics',word_ext='.words.txt',prediction_dir='metadata',prediction_ext='_align.csv')
 
     #delay = np.arange(0,25.0,1.0)
     delay = [0]

@@ -306,7 +306,7 @@ if __name__ == '__main__':
 
 
         audio_file      = audio_filenames[i]
-        word_onset_file = word_onset_filenames[i] #picked randomly
+        word_onset_file = word_onset_filenames[i]
         word_file       = word_filenames[i]
 
         ref_times = get_jamendo_timing_labels(word_onset_file)
